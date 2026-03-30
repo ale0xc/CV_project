@@ -5,13 +5,17 @@ extName = 'jpg';
 frameIdComp = 4;
 str = ['%sframe_%.' num2str(frameIdComp) 'd.%s'];
 
-firstImg = imread(sprintf(str, path, 1, extName));
-[h, w, c] = size(firstImg);
 nFrame = 500;
 step = 15;
-for k = 1 : 1 : nFrame/step
-    img = imread(sprintf(str,path,k,extName));
-    vid4D(:,:,:,k)=img;
+sampleFrames = 1:step:nFrame;
+numSamples = length(sampleFrames);
+
+firstImg = imread(sprintf(str, path, 1, extName));
+[h, w, c] = size(firstImg);
+vid4D = zeros(h, w, c, numSamples, 'uint8');
+
+for idx = 1:numSamples
+    vid4D(:,:,:,idx) = imread(sprintf(str, path, sampleFrames(idx), extName));
 end
 
 imgBkRgb = median(vid4D, 4);
@@ -49,58 +53,20 @@ for i = 0:seqLength
 end
 
 X = allPedestrianPoints;
-[N, D] = size(X);
 numClusters = 4; 
 
-rng(42);
-randIdx = randperm(N, numClusters);
-mu = X(randIdx, :);
-Sigma = repmat(eye(D) * 100, [1, 1, numClusters]);
-piW = ones(1, numClusters) / numClusters;
+options = statset('MaxIter', 200, 'TolFun', 1e-5, 'Display', 'off');
+gmmModel = fitgmdist(X, numClusters, 'Options', options, 'Replicates', 10, 'RegularizationValue', 1e-5);
 
-maxIter = 200;
-tol = 1e-5;
-logL_old = -inf;
+logL = -gmmModel.NegativeLogLikelihood;
+bicValue = gmmModel.BIC;
 
-for iter = 1:maxIter
-    prob = zeros(N, numClusters);
-    for k = 1:numClusters
-        diff = X - mu(k, :);
-        invSigma = inv(Sigma(:, :, k));
-        detSigma = det(Sigma(:, :, k));
-        normConst = 1 / sqrt(((2*pi)^D) * detSigma);
-        exponent = -0.5 * sum((diff * invSigma) .* diff, 2);
-        prob(:, k) = piW(k) * normConst * exp(exponent);
-    end
-    
-    probSum = sum(prob, 2);
-    probSum(probSum == 0) = eps;
-    gamma = prob ./ probSum;
-    
-    logL = sum(log(probSum));
-    if abs(logL - logL_old) < tol
-        break;
-    end
-    logL_old = logL;
-    
-    Nk = sum(gamma, 1);
-    for k = 1:numClusters
-        piW(k) = Nk(k) / N;
-        mu(k, :) = (gamma(:, k)' * X) / Nk(k);
-        diff = X - mu(k, :);
-        Sigma(:, :, k) = (diff' * (diff .* gamma(:, k))) / Nk(k) + eye(D) * 1e-5;
-    end
-end
-
-numParams = (numClusters * D) + (numClusters * D * (D + 1) / 2) + (numClusters - 1);
-bicValue = -2 * logL + numParams * log(N);
-
-fprintf('\nManual EM Algorithm Results:\n');
+fprintf('\nMATLAB fitgmdist Algorithm Results:\n');
 fprintf('Chosen Clusters (K): %d\n', numClusters);
 fprintf('Final Log-Likelihood: %.2f\n', logL);
 fprintf('BIC Evaluation Score: %.2f\n\n', bicValue);
 
-figure('Name', 'Manual EM Trajectory Analysis');
+figure('Name', 'MATLAB EM Trajectory Analysis');
 imshow(uint8(imgBkRgb * 0.4)); 
 hold on;
 
@@ -112,12 +78,14 @@ yGrid = linspace(1, h, 100);
 [X1, X2] = meshgrid(xGrid, yGrid);
 
 for k = 1:numClusters
-    weight = piW(k) * 100;
+    muK = gmmModel.mu(k, :);
+    sigmaK = gmmModel.Sigma(:, :, k);
+    weightK = gmmModel.ComponentProportion(k) * 100;
     
-    diffGrid = [X1(:) X2(:)] - mu(k, :);
-    invSigma = inv(Sigma(:, :, k));
-    detSigma = det(Sigma(:, :, k));
-    normConst = 1 / sqrt(((2*pi)^D) * detSigma);
+    diffGrid = [X1(:) X2(:)] - muK;
+    invSigma = inv(sigmaK);
+    detSigma = det(sigmaK);
+    normConst = 1 / sqrt(((2*pi)^2) * detSigma);
     exponent = -0.5 * sum((diffGrid * invSigma) .* diffGrid, 2);
     F = normConst * exp(exponent);
     F = reshape(F, length(yGrid), length(xGrid));
@@ -128,8 +96,8 @@ for k = 1:numClusters
     colorIdx = mod(k-1, length(colors)) + 1;
     
     contour(xGrid, yGrid, F, contourLevels, 'LineColor', colors(colorIdx), 'LineWidth', 2);
-    plot(mu(k, 1), mu(k, 2), 'x', 'MarkerSize', 12, 'LineWidth', 3, 'Color', colors(colorIdx));
-    text(mu(k, 1) + 15, mu(k, 2) - 15, sprintf('Path %d (%.1f%%)', k, weight), 'Color', colors(colorIdx), 'FontSize', 12, 'FontWeight', 'bold');
+    plot(muK(1), muK(2), 'x', 'MarkerSize', 12, 'LineWidth', 3, 'Color', colors(colorIdx));
+    text(muK(1) + 15, muK(2) - 15, sprintf('Path %d (%.1f%%)', k, weightK), 'Color', colors(colorIdx), 'FontSize', 12, 'FontWeight', 'bold');
 end
 
 title(sprintf('EM Algorithm - K = %d (BIC: %.0f)', numClusters, bicValue));
