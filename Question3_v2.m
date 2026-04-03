@@ -1,8 +1,9 @@
 clear all, close all
-path = "C:/Users/acach/ist-cv-2526/Project/Images/";
+path = "View_01/";
 extName = 'jpg';
 frameIdComp = 4;
 str  = ['%sframe_%.' num2str(frameIdComp) 'd.%s'];
+
 % --- Background Detection ---
 nFrame = 500;
 step = 15;
@@ -12,11 +13,13 @@ for k = 1 : 1 : nFrame/step
 end
 imgbk_rgb = median(vid4D,4);
 imgbk = double(imgbk_rgb);
+
 % --- Parameters ---
 thr = 40;       
 minArea = 250;
 seqLength = 794;
 se = strel('rectangle', [10, 2]);
+
 % --- Tracking & Trajectories Setup ---
 max_p = 50; 
 trajectories = cell(max_p, 1);

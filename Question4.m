@@ -1,5 +1,5 @@
 clear all, close all
-path = "C:/Users/acach/ist-cv-2526/Project/Images/";
+path = "View_01/";
 extName = 'jpg';
 frameIdComp = 4;
 str  = ['%sframe_%.' num2str(frameIdComp) 'd.%s'];

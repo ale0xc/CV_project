@@ -1,5 +1,5 @@
-gtData = readmatrix('C:/Users/acach/ist-cv-2526/Project/gt.txt'); 
-imagesPath = "C:/Users/acach/ist-cv-2526/Project/Images/"; 
+gtData = readmatrix('gt/gt.txt'); 
+imagesPath = "View_01/"; 
 nImages = 794;
 extName = 'jpg';
 frameIdComp = 4;
