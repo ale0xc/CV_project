@@ -11,94 +11,136 @@ for k = 1 : 1 : nFrame/step
     vid4D(:,:,:,k)=img;
 end
 imgbk_rgb = median(vid4D,4);
-imgbk = double(imgbk_rgb);
+imgBk = double(imgbk_rgb);
 
 thr = 40;       
 minArea = 250;
 seqLength = 794;
 se = strel('rectangle', [10, 2]);
 
-max_p = 1000; 
-trajectories = cell(max_p, 1);
-last_bboxes = []; 
-last_ids = []; 
-iou_threshold = 0.3; 
-next_id = 1;
+maxP = 1000; 
+trajectories = cell(maxP, 1);
+
+activeCentroids = []; 
+activeVelocities = []; 
+activeIds = []; 
+invisibleCounts = []; 
+distThreshold = 50; 
+maxInvisible = 5; 
+nextId = 1;
 
 figure;
 for i=0:seqLength
-    imgfr_rgb = imread(sprintf(str,path,i,extName));
-    imgfr = double(imgfr_rgb);
+    imgFrRgb = imread(sprintf(str,path,i,extName));
+    imgFr = double(imgFrRgb);
          
-    imgdif = (abs(double(imgbk(:,:,1))-double(imgfr(:,:,1)))>thr) | ...
-        (abs(double(imgbk(:,:,2))-double(imgfr(:,:,2)))>thr) | ...
-        (abs(double(imgbk(:,:,3))-double(imgfr(:,:,3)))>thr);
-    bw_clean = imclose(imgdif, se);      
-    bw_clean = imopen(bw_clean, se);
-    bw_clean = imfill(bw_clean, 'holes');
+    imgDif = (abs(imgBk(:,:,1)-imgFr(:,:,1))>thr) | ...
+             (abs(imgBk(:,:,2)-imgFr(:,:,2))>thr) | ...
+             (abs(imgBk(:,:,3)-imgFr(:,:,3))>thr);
+             
+    bwClean = imclose(imgDif, se);      
+    bwClean = imopen(bwClean, se);
+    bwClean = imfill(bwClean, 'holes');
     
-    [lb, num] = bwlabel(bw_clean);
-    regionProps = regionprops(lb,'area','BoundingBox', 'Centroid');
+    [lb, num] = bwlabel(bwClean);
+    regionProps = regionprops(lb,'Area','BoundingBox', 'Centroid');
     
-    imshow(imgfr_rgb); hold on;
+    imshow(imgFrRgb); hold on;
     
-    current_bboxes = [];
-    current_centroids = [];
+    currentBboxes = [];
+    currentCentroids = [];
     
     for j = 1:num
         if regionProps(j).Area > minArea
-            current_bboxes = [current_bboxes; regionProps(j).BoundingBox];
-            current_centroids = [current_centroids; regionProps(j).Centroid];
+            currentBboxes = [currentBboxes; regionProps(j).BoundingBox];
+            currentCentroids = [currentCentroids; regionProps(j).Centroid];
         end
     end
     
-    current_ids = zeros(size(current_bboxes, 1), 1);
+    currentIds = zeros(size(currentBboxes, 1), 1);
+    matchedActiveIdx = [];
+    newIds = [];
+    newCentroids = [];
     
-    if ~isempty(current_bboxes)
-        if ~isempty(last_bboxes)
-            iouMatrix = bboxOverlapRatio(current_bboxes, last_bboxes);
+    if ~isempty(currentCentroids)
+        if ~isempty(activeCentroids)
+            predictedCentroids = activeCentroids + activeVelocities;
+            distMatrix = pdist2(currentCentroids, predictedCentroids);
             
-            for c = 1:size(current_bboxes, 1)
-                [max_iou, match_idx] = max(iouMatrix(c, :));
+            for c = 1:size(currentCentroids, 1)
+                [minDist, matchIdx] = min(distMatrix(c, :));
                 
-                if max_iou > iou_threshold
-                    current_ids(c) = last_ids(match_idx);
-                    iouMatrix(:, match_idx) = -1; 
+                if minDist < distThreshold
+                    currentIds(c) = activeIds(matchIdx);
+                    distMatrix(:, matchIdx) = inf; 
+                    matchedActiveIdx = [matchedActiveIdx; matchIdx];
+                    
+                    activeVelocities(matchIdx, :) = currentCentroids(c, :) - activeCentroids(matchIdx, :);
+                    activeCentroids(matchIdx, :) = currentCentroids(c, :);
+                    invisibleCounts(matchIdx) = 0;
                 else
-                    current_ids(c) = next_id;
-                    next_id = next_id + 1;
+                    currentIds(c) = nextId;
+                    newIds = [newIds; nextId];
+                    newCentroids = [newCentroids; currentCentroids(c, :)];
+                    nextId = nextId + 1;
                 end
             end
         else
-            for c = 1:size(current_bboxes, 1)
-                current_ids(c) = next_id;
-                next_id = next_id + 1;
+            for c = 1:size(currentCentroids, 1)
+                currentIds(c) = nextId;
+                newIds = [newIds; nextId];
+                newCentroids = [newCentroids; currentCentroids(c, :)];
+                nextId = nextId + 1;
             end
         end
         
-        for c = 1:size(current_bboxes, 1)
-            bbox = current_bboxes(c, :);
-            center = current_centroids(c, :);
-            assigned_id = current_ids(c);
+        numOldActive = length(activeIds);
+        unmatchedIdx = setdiff(1:numOldActive, matchedActiveIdx);
+        invisibleCounts(unmatchedIdx) = invisibleCounts(unmatchedIdx) + 1;
+        activeCentroids(unmatchedIdx, :) = activeCentroids(unmatchedIdx, :) + activeVelocities(unmatchedIdx, :);
+        
+        activeIds = [activeIds; newIds];
+        activeCentroids = [activeCentroids; newCentroids];
+        activeVelocities = [activeVelocities; zeros(length(newIds), 2)];
+        invisibleCounts = [invisibleCounts; zeros(length(newIds), 1)];
+        
+        validTracks = invisibleCounts <= maxInvisible;
+        activeIds = activeIds(validTracks);
+        activeCentroids = activeCentroids(validTracks, :);
+        activeVelocities = activeVelocities(validTracks, :);
+        invisibleCounts = invisibleCounts(validTracks);
+        
+        for c = 1:size(currentBboxes, 1)
+            bbox = currentBboxes(c, :);
+            center = currentCentroids(c, :);
+            assignedId = currentIds(c);
             
-            trajectories{assigned_id} = [trajectories{assigned_id} ; center];
-            if size(trajectories{assigned_id}, 1) > 20
-                trajectories{assigned_id} = trajectories{assigned_id}(end-19:end, :);
+            trajectories{assignedId} = [trajectories{assignedId}; center];
+            if size(trajectories{assignedId}, 1) > 20
+                trajectories{assignedId} = trajectories{assignedId}(end-19:end, :);
             end
             
             rectangle('Position', bbox, 'EdgeColor', [1 0 0], 'linewidth', 2);
-            text(bbox(1), bbox(2)-5, num2str(assigned_id), 'Color', 'red', 'FontSize', 12, 'FontWeight', 'bold');
+            text(bbox(1), bbox(2)-5, num2str(assignedId), 'Color', 'red', 'FontSize', 12, 'FontWeight', 'bold');
             
-            path_p = trajectories{assigned_id};
-            if size(path_p, 1) > 1
-                plot(path_p(:, 1), path_p(:, 2), 'y-', 'LineWidth', 1.5);
+            pathP = trajectories{assignedId};
+            if size(pathP, 1) > 1
+                plot(pathP(:, 1), pathP(:, 2), 'y-', 'LineWidth', 1.5);
                 plot(center(1), center(2), 'y.', 'MarkerSize', 10);
             end
         end
+    else
+        if ~isempty(activeIds)
+            invisibleCounts = invisibleCounts + 1;
+            activeCentroids = activeCentroids + activeVelocities;
+            
+            validTracks = invisibleCounts <= maxInvisible;
+            activeIds = activeIds(validTracks);
+            activeCentroids = activeCentroids(validTracks, :);
+            activeVelocities = activeVelocities(validTracks, :);
+            invisibleCounts = invisibleCounts(validTracks);
+        end
     end
-    
-    last_bboxes = current_bboxes;
-    last_ids = current_ids;
     
     title(['Frame: ', num2str(i)]);
     drawnow;
